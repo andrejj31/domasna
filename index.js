@@ -1,8 +1,14 @@
-const { Builder, By, until } = require('selenium-webdriver');
-const cheerio = require('cheerio');
-const axios = require('axios');
+import * as cheerio from "cheerio";
+import axios from "axios";
+import fs from "fs";
+import { fileURLToPath } from "url";
+import { dirname } from "path";
+import path from "path";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
+const RWPATH = path.join(__dirname, "data.json");
 const url = `https://www.mse.mk/mk/stats/symbolhistory/grdn`;
 
 async function fetchOptions() {
@@ -14,75 +20,62 @@ async function fetchOptions() {
   let newOptions = [];
   options.each((index, element) => {
     const optionText = $(element).text().trim();
-    // Use regex to check if optionText contains any digits
     if (!/\d/.test(optionText)) {
       newOptions.push(optionText);
     }
   });
-
-  return newOptions
 }
 
-async function scrapeMSE(tag="grnd", startDate, endDate) {
-    let driver = await new Builder().forBrowser('chrome').build();
-    try {
-        const url = 'https://www.mse.mk/mk/stats/symbolhistory/${tag}';
-        await driver.get(url);
-        
-        await driver.wait(until.elementLocated(By.css('input.datepicker')), 10000);
+async function fetchData(code, startDate, endDate) {
+  const response = await axios.post(url, {
+    fromDate: startDate,
+    ToDate: endDate,
+    Code: code,
+  });
+  const $ = cheerio.load(response.data);
 
-        const newStartDate = startDate; 
-        const newEndDate = endDate
-
-        let startDateInput = await driver.findElements(By.css('input.datepicker')).then(inputs => inputs[0]);
-        await startDateInput.clear();
-        await startDateInput.sendKeys(newStartDate);
-
-        let endDateInput = await driver.findElements(By.css('input.datepicker')).then(inputs => inputs[1]);
-        await endDateInput.clear();
-        await endDateInput.sendKeys(newEndDate);
-
-        await driver.findElement(By.css('input[value="Прикажи"]')).click();
-
-        await driver.wait(until.elementLocated(By.css('table')), 10000);
-
-        // Get the entire table's HTML
-        const tableHTML = await driver.getPageSource();
-
-        
-        // Load the table HTML with Cheerio
-        const $ = cheerio.load(tableHTML);
-
-        const data = [];
-        $('tr').each((i, row) => {
-            const columns = $(row).find('td');
-            if (columns.length) {
-                const rowData = {
-                    date: $(columns[0]).text().trim(),
-                    price: $(columns[1]).text().trim(),
-                    volume: $(columns[2]).text().trim(),
-                };
-                data.push(rowData);
-            }
-        });
-
-        console.log('Data:', data);
-        return data
-    } catch (error) {
-        console.error('Error:', error);
-    } finally {
-        await driver.quit(); // Close the browser
+  const data = [];
+  $("tr").each((i, row) => {
+    const columns = $(row).find("td");
+    if (columns.length) {
+      const rowData = {};
+      const keys = [
+        "datum",
+        "poslednaTransakcija",
+        "max",
+        "min",
+        "avg",
+        "prom",
+        "kolicina",
+        "prometBEST",
+        "vkupenPromet",
+      ];
+      columns.each((j, column) => {
+        rowData[`${keys[j]}`] = $(column).text().trim();
+      });
+      data.push(rowData);
     }
-};
+  });
 
-async function run() {
-    const codes = await fetchOptions()
-    console.log(codes)
-    let arr = [];
-    codes.forEach(async (code) => {
-        arr = [...arr , await scrapeMSE(code,"2014.01.01", "2014.12.31")]
-    });
-    console.log(arr)
+  const finalData = {
+    pocetenDatum: startDate,
+    kraenDatum: endDate,
+    code: code,
+    data: data,
+  };
+  //   console.log(finalData);
 }
 
-run()
+// fetchData("ADIN", "01.01.2014", "31.12.2014");
+
+function readFile() {
+  if (fs.existsSync(RWPATH)) {
+    const data = fs.readFileSync(RWPATH);
+    return JSON.parse(RWPATH);
+  }
+  return { codes: {} };
+}
+
+function writeData(data) {
+  fs.writeFileSync(RWPATH, JSON.stringify(data, null, 2), "utf8");
+}
